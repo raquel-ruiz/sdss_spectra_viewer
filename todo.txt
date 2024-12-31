@@ -1,1 +1,4 @@
 - automatic way of plotting all lines in the fits file without explicitly passing them as the "lines" arg in plot_lines, plot_spec, and grid_specs
+- add comments
+- add docstrings
+- improve README
