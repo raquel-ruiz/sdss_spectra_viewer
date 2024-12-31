@@ -1,3 +1,1 @@
-- implement df_idx in plot_spec and grid_specs
-- add option to insert a dict (e.g. the output from get_spec) in plot_spec
 - automatic way of plotting all lines in the fits file without explicitly passing them as the "lines" arg in plot_lines, plot_spec, and grid_specs

@@ -1,13 +1,17 @@
 import os
+import warnings
 
 import numpy as np
 from pandas import read_csv, DataFrame
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from astroquery.sdss import SDSS
+from astroquery.sdss.core import NoResultsWarning
+
+warnings.filterwarnings('ignore', category=NoResultsWarning)
 
 
-def get_spec(plate:int, mjd:int, fiberid:int, model=True):
+def get_spec(plate:int, mjd:int, fiberid:int, model=True) -> dict:
     """
     Retrieves SDSS spectrum data for a given plate, mjd, and fiberid.
 
@@ -24,7 +28,7 @@ def get_spec(plate:int, mjd:int, fiberid:int, model=True):
     
     hdul = SDSS.get_spectra(plate=plate, mjd=mjd, fiberID=fiberid)
     if hdul is None:
-        print(f'No spetrum found for plate={plate}, mjd={mjd}, fiberID={fiberid}.')
+        print(f'No spectrum found for plate={plate}, mjd={mjd}, fiberID={fiberid}.')
         return None
 
     data = hdul[0]
@@ -90,7 +94,7 @@ def make_spec_df(df, df_idx=None, model=True):
     return specs
 
 
-def AB_to_flux(mag:float, err:int, wav:float):
+def AB_to_flux(mag:float, err:int, wav:float) -> tuple:
     
     fv = 10 ** (-(mag + 2.41) / 2.5) / wav**2
     fv = fv * 1e17
@@ -148,8 +152,6 @@ def plot_SED(ax, df, filters_dict, flux=True, errorbar=False):
             ax.errorbar(wav, value, error, c=color, zorder=1, fmt=marker, ms=6, markerfacecolor=mfc)
         else:
             ax.scatter(wav, value, zorder=1, marker=marker, facecolor=mfc, edgecolor=color)
-    
-    return None
 
 
 def plot_transm_curve(ax, filters_dict:dict, path_filters=os.path.join('filters')):
@@ -164,43 +166,42 @@ def plot_transm_curve(ax, filters_dict:dict, path_filters=os.path.join('filters'
     return ax2
 
 
-def plot_lines(ax, spec, lines):
+def plot_lines(ax, spec:dict, lines):
     
-    if spec is not None:
+    if isinstance(lines, list):
+        lines_plot = lines
+    elif isinstance(lines, dict):
+        lines_plot = list(lines.keys())
     
-        lines_plot = lines if isinstance(lines, list) else list(lines.keys())
-        indices = np.where(np.isin(spec['line_names'], lines_plot))
+    indices = np.where(np.isin(spec['line_names'], lines_plot))
+    
+    if indices is not None:
+        line_waves = spec['line_waves'][indices[0]]
+        line_names = spec['line_names'][indices[0]]
         
-        if indices is not None:
-            line_waves = spec['line_waves'][indices[0]]
-            line_names = spec['line_names'][indices[0]]
-            
-            if isinstance(lines, list):
+        if isinstance(lines, list):
 
-                indices_cores = (line_waves-line_waves.min()) / (line_waves.max()-line_waves.min())
-                
-                for i in range(len(line_waves)):
-                    color = plt.cm.get_cmap('tab20')(indices_cores[i])
-                    ax.axvline(line_waves[i], ls='--', label=line_names[i], color=color, zorder=2, lw=2)
-                leg = ax.legend(ncol=5)
-                for legobj in leg.legendHandles:
-                    legobj.set_linewidth(2)
+            indices_cores = (line_waves-line_waves.min()) / (line_waves.max()-line_waves.min())
             
-            elif isinstance(lines, dict):
-                
-                for i in range(len(line_waves)):
-                    color = lines[line_names[i]]
-                    ax.axvline(line_waves[i], ls='--', color=color, zorder=2, lw=2)
-                return list(line_names)
-    
+            for i in range(len(line_waves)):
+                color = plt.cm.get_cmap('tab20')(indices_cores[i])
+                ax.axvline(line_waves[i], ls='--', label=line_names[i], color=color, zorder=2, lw=2)
+            ax.legend(ncol=5)
+            handles, _ = ax.get_legend_handles_labels()
+            for handle in handles:
+                handle.set_linewidth(2)
+        
+        elif isinstance(lines, dict):
+            
+            for i in range(len(line_waves)):
+                color = lines[line_names[i]]
+                ax.axvline(line_waves[i], ls='--', color=color, zorder=2, lw=2)
+            return list(line_names)
+
     return None
-    
 
-def plot_spec(ax, df, spec, lines=[], SED=False, transm_curve={}, legend_cols=None):
-    '''
-    df: pd.Series with ['Z', 12 S-PLUS magnitudes]
-    spec: pd.Series with ['wavelength', 'flux', 'line_names', 'line_waves']
-    '''
+
+def plot_spec(ax, df, spec:dict, lines=[], SED=False, transm_curve={}, legend_cols=None):
     
     if spec is not None:
         ax.plot(spec['wavelength'], spec['flux'], color='k', lw=1, zorder=1)
@@ -213,7 +214,10 @@ def plot_spec(ax, df, spec, lines=[], SED=False, transm_curve={}, legend_cols=No
     legend_items = []
     for col, display_name in legend_cols.items():
         try:
-            value = round(df[col], 2)
+            try:
+                value = round(df[col], 2)
+            except TypeError:
+                value = df[col]
             legend_items.append(f'{display_name} = {value}')
         except KeyError:
             continue
@@ -234,38 +238,57 @@ def plot_spec(ax, df, spec, lines=[], SED=False, transm_curve={}, legend_cols=No
         ax.set_frame_on(False)
         return ax2
     
-    return None
+    return ax
 
 
-def grid_specs(df, specs, lines={}, SED=False, transm_curve={}):
+def grid_specs(df, df_idx=None, specs=None, lines={}, SED=False, transm_curve={}, model=True, legend_cols=None):
     
-    nlin = (len(df) // 2) + (len(df) % 2)
-    ncol = 2
+    if df_idx is not None:
+        df = df.loc[df_idx]
     index = df.index
-
-    fig, ax = plt.subplots(nlin, ncol, figsize=(18, 3*nlin), sharex=True)
-    ax = ax.flatten() 
+    
+    ncols = 2
+    nrows = (len(df) // 2) + (len(df) % 2)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(18, 3*nrows), sharex=True)
+    axes = axes.flatten()
+    
+    if specs is None:
+        specs = make_spec_df(
+            df=df,
+            df_idx=df_idx,
+            model=model
+            )
     
     if lines: line_labels = []
     for i in range(len(df)):
         idx = index[i]
+        ax = axes[i]
+        
+        if i >= (nrows-1)*ncols:
+            ax.set_xlabel('Wavelength [Å]', size=16)
         
         try:
-            spec = specs.loc[idx]
+            spec = specs.loc[idx].to_dict()
             if lines:
-                labels = plot_lines(ax[i], spec, lines)
+                labels = plot_lines(ax, spec, lines)
                 line_labels.extend(labels)
-        except KeyError: spec = None
+        except KeyError:
+            spec = None
         
-        ax2 = plot_spec(ax[i], df.loc[idx], spec, False, SED, transm_curve)
-        
-        if i >= (nlin-1)*ncol:
-            ax[i].set_xlabel('Wavelength [Å]', size=16)
+        ax = plot_spec(
+            ax=ax,
+            df=df.loc[idx],
+            spec=spec,
+            lines=False,
+            SED=SED,
+            transm_curve=transm_curve,
+            legend_cols=legend_cols
+            )
         
         if transm_curve:
-            if i % ncol == 0:
-                ax2.set_yticklabels([])
-                ax2.set_yticks([])
+            if i % ncols == 0:
+                ax.set_yticklabels([])
+                ax.set_yticks([])
     
     if lines:
         line_labels = set(line_labels)
@@ -280,5 +303,3 @@ def grid_specs(df, specs, lines={}, SED=False, transm_curve={}):
         fig.text(1.01, 0.5, 'Transmittance [%]', va='center', rotation='vertical', size=16)
     fig.tight_layout()
     plt.show()
-    
-    return None
