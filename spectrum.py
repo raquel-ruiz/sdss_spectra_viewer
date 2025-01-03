@@ -166,47 +166,57 @@ def plot_transm_curve(ax, filters_dict:dict, path_filters=os.path.join('filters'
     return ax2
 
 
-def plot_lines(ax, spec:dict, lines):
+def plot_lines(ax, spec:dict, lines:list|dict|None, grid:bool):
     
     if isinstance(lines, list):
-        lines_plot = lines
+        lines_to_plot = lines
     elif isinstance(lines, dict):
-        lines_plot = list(lines.keys())
+        lines_to_plot = list(lines.keys())
+    elif lines is None:
+        lines_to_plot = spec['line_names'].tolist()
+    else:
+        print('Invalid input type for lines.')
+        return None
     
-    indices = np.where(np.isin(spec['line_names'], lines_plot))
+    indices = np.where(np.isin(spec['line_names'], lines_to_plot))
     
-    if indices is not None:
+    if len(indices[0]) > 0:
         line_waves = spec['line_waves'][indices[0]]
         line_names = spec['line_names'][indices[0]]
+        if len(line_waves) > 1:
+            color_index = (line_waves - line_waves.min()) / (line_waves.max() - line_waves.min())
+        else:
+            color_index = [0.1]
         
-        if isinstance(lines, list):
-
-            indices_cores = (line_waves-line_waves.min()) / (line_waves.max()-line_waves.min())
+        colors = []   
+        for i in range(len(line_waves)):
             
-            for i in range(len(line_waves)):
-                color = plt.cm.get_cmap('tab20')(indices_cores[i])
+            if isinstance(lines, list) or lines is None:
+                color = plt.cm.get_cmap('tab20')(color_index[i])
+            else:
+                color = lines[line_names[i]]
+                        
+            if not grid:
                 ax.axvline(line_waves[i], ls='--', label=line_names[i], color=color, zorder=2, lw=2)
+            else:
+                ax.axvline(line_waves[i], ls='--', color=color, zorder=2, lw=2)
+                colors.append(color)
+        
+        if not grid:
             ax.legend(ncol=5)
             handles, _ = ax.get_legend_handles_labels()
             for handle in handles:
-                handle.set_linewidth(2)
-        
-        elif isinstance(lines, dict):
-            
-            for i in range(len(line_waves)):
-                color = lines[line_names[i]]
-                ax.axvline(line_waves[i], ls='--', color=color, zorder=2, lw=2)
-            return list(line_names)
-
-    return None
+                handle.set_linewidth(2)        
+        else:
+            return list(line_names), colors
 
 
-def plot_spec(ax, df, spec:dict, lines=[], SED=False, transm_curve={}, legend_cols=None):
+def plot_spec(ax, df, spec:dict, lines=[], SED=False, transm_curve={}, legend_cols=None, grid=False):
     
     if spec is not None:
         ax.plot(spec['wavelength'], spec['flux'], color='k', lw=1, zorder=1)
-        if lines:
-            plot_lines(ax, spec, lines)
+        if lines or lines is None:
+            plot_lines(ax, spec, lines, grid)
     
     if legend_cols is None:
         legend_cols = {'Z': '$z_{spec}$', 'r_PStotal': '$r$'}
@@ -222,11 +232,10 @@ def plot_spec(ax, df, spec:dict, lines=[], SED=False, transm_curve={}, legend_co
         except KeyError:
             continue
     
-    if isinstance(lines, list):
+    if not grid:
         ax.set_title(', '.join(legend_items), size=16)
     else:
-        ax.legend([Line2D([0], [0])], ['\n'.join(legend_items)],
-                  handlelength=0, handletextpad=0, fontsize=16)
+        ax.legend([Line2D([0], [0])], ['\n'.join(legend_items)], handlelength=0, handletextpad=0, fontsize=16)
     
     ax.grid(axis='x', alpha=0.5)
     
@@ -259,7 +268,8 @@ def grid_specs(df, df_idx=None, specs=None, lines={}, SED=False, transm_curve={}
             model=model
             )
     
-    if lines: line_labels = []
+    lines_dict = {}
+        
     for i in range(len(df)):
         idx = index[i]
         ax = axes[i]
@@ -269,9 +279,11 @@ def grid_specs(df, df_idx=None, specs=None, lines={}, SED=False, transm_curve={}
         
         try:
             spec = specs.loc[idx].to_dict()
-            if lines:
-                labels = plot_lines(ax, spec, lines)
-                line_labels.extend(labels)
+            if lines or lines is None:
+                labels_colors = plot_lines(ax, spec, lines, grid=True)
+                if labels_colors is not None:
+                    labels, colors = labels_colors
+                    lines_dict.update({labels[i]: colors[i] for i in range(len(labels))})
         except KeyError:
             spec = None
         
@@ -282,7 +294,8 @@ def grid_specs(df, df_idx=None, specs=None, lines={}, SED=False, transm_curve={}
             lines=False,
             SED=SED,
             transm_curve=transm_curve,
-            legend_cols=legend_cols
+            legend_cols=legend_cols,
+            grid=True
             )
         
         if transm_curve:
@@ -290,11 +303,10 @@ def grid_specs(df, df_idx=None, specs=None, lines={}, SED=False, transm_curve={}
                 ax.set_yticklabels([])
                 ax.set_yticks([])
     
-    if lines:
-        line_labels = set(line_labels)
-        handles = [Line2D([0], [0], ls='--', c=lines[line]) for line in line_labels]
-        fig.legend(handles=handles, labels=line_labels, loc='upper center',
-                         bbox_to_anchor=(0.5, 1.05), ncol=10, fontsize=16)
+    if len(lines_dict) > 0:
+        handles = [Line2D([0], [0], ls='--', c=lines_dict[line]) for line in lines_dict]
+        fig.legend(handles=handles, labels=lines_dict.keys(), loc='upper center',
+                        bbox_to_anchor=(0.5, 1.14), ncol=8, fontsize=16)
         for handle in handles:
             handle.set_linewidth(2)
 
